@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mapa Globalizador 3D</title>
+  <style>
+    :root { --bg:#0b0e12; --panel:rgba(20,22,27,.86); --text:#e6e6e6; --muted:#aab0b7; }
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif}
+    #app{position:fixed;inset:0}
+    canvas{display:block}
+    .panel{position:fixed;top:12px;left:12px;max-width:540px;background:var(--panel);backdrop-filter:blur(6px);border:1px solid rgba(255,255,255,.08);padding:12px 14px;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.35);z-index:10}
+    .panel h1{font-size:14px;margin:0 0 8px;letter-spacing:.3px;color:#fff;display:flex;align-items:center;justify-content:space-between}
+    .panel.min .row,.panel.min .note,.panel.min #langToggle{display:none}
+    .row{display:flex;align-items:center;gap:10px;margin:8px 0;flex-wrap:wrap}
+    .row label{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px}
+    .btn{cursor:pointer;background:#1e232b;color:#fff;border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:7px 10px;font-size:13px}
+    .btn:hover{background:#242a33}
+    .note{font-size:12px;color:var(--muted);line-height:1.35}
+    .coords{position:fixed;right:12px;bottom:12px;background:var(--panel);border:1px solid rgba(255,255,255,.08);padding:8px 10px;border-radius:12px;font-size:12px;color:var(--muted);z-index:5}
+    .tooltip{position:fixed;pointer-events:none;transform:translate(-50%,-120%);background:rgba(32,36,44,.92);color:#fff;padding:6px 8px;border:1px solid rgba(255,255,255,.1);border-radius:8px;font-size:12px;white-space:nowrap;display:none;z-index:5}
+    .file{display:inline-block}
+    .compass{position:fixed;top:12px;right:12px;width:110px;height:110px;border-radius:50%;background:rgba(20,22,27,.86);border:1px solid rgba(255,255,255,.08);display:grid;place-items:center;box-shadow:0 8px 24px rgba(0,0,0,.35);z-index:10}
+    .compass .dial{position:relative;width:90px;height:90px;border-radius:50%;border:1px solid rgba(255,255,255,.15)}
+    .compass .label{position:absolute;left:50%;transform:translateX(-50%);font-size:11px;color:#e6e6e6}
+    .compass .label.n{top:-2px}.compass .label.s{bottom:-2px}
+    .compass .label.e{top:50%;right:-4px;transform:translate(0,-50%);left:auto}
+    .compass .label.w{top:50%;left:-4px;transform:translate(0,-50%)}
+    .compass .needle{position:absolute;left:50%;top:50%;width:2px;height:32px;background:#ff7a7a;transform-origin:50% 100%;transform:translate(-50%,-100%) rotate(0deg);border-radius:2px;box-shadow:0 0 10px rgba(255,122,122,.6)}
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div class="panel" id="panel">
+    <h1 id="titleText">
+      Mapa Globalizador 3D
+      <button class="btn" id="togglePanel" title="Minimizar">Minimizar</button>
+    </h1>
+    <button class="btn" id="langToggle">Change to English</button>
+
+    <div class="row">
+      <label id="labelFileImg" for="fileImg">Imagen del mapa a globalizar</label>
+      <input id="fileImg" class="file" type="file" accept="image/*">
+      <button class="btn" id="removeTexture" title="Eliminar imagen y volver al globo por defecto">Eliminar imagen</button>
+    </div>
+
+    <div class="row">
+      <label id="labelImportMarkers" for="importMarkers">JSON de marcadores (opcional)</label>
+      <input id="importMarkers" class="file" type="file" accept="application/json">
+      <button class="btn" id="clearMarkers">Borrar marcadores</button>
+      <button class="btn" id="exportMarkers">Exportar marcadores</button>
+    </div>
+
+    <div class="row">
+      <label><input id="toggleRotate" type="checkbox" checked> <span id="labelRotate">Rotación automática</span></label>
+      <button class="btn" id="resetView">Resetear posición</button>
+    </div>
+
+    <div class="row">
+      <label><input id="toggleGlobalLight" type="checkbox"> <span id="labelGlobalLight">Iluminación global (sin día/noche)</span></label>
+      <label id="labelLight"><span id="labelLightText">Iluminación:</span> <input id="lightSlider" type="range" min="0" max="2" step="0.05" value="1" disabled></label>
+      <span id="lightValue" class="note">1.00</span>
+    </div>
+
+    <div class="note" id="noteText">
+      • Sube cualquier <b>mapa equirectangular</b> (relación 2:1). Doble clic en el globo para añadir un marcador; mueve con Shift+arrastrar.
+    </div>
+  </div>
+
+  <div class="coords" id="coords">Lat: —°, Lon: —° · Dist: —</div>
+  <div class="tooltip" id="tooltip"></div>
+
+  <div class="compass" id="compass">
+    <div class="dial">
+      <div class="label n" id="compassN">N</div>
+      <div class="label e" id="compassE">E</div>
+      <div class="label s" id="compassS">S</div>
+      <div class="label w" id="compassW">O</div>
+      <div class="needle" id="needle"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+    import { OrbitControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js?module';
+
+    // i18n
+    const i18n={ es:{title:'Mapa Globalizador 3D',change:'Change to English',file:'Imagen del mapa a globalizar',imp:'JSON de marcadores (opcional)',clr:'Borrar marcadores',exp:'Exportar marcadores',rot:'Rotación automática',reset:'Resetear posición',glob:'Iluminación global (sin día/noche)',light:'Iluminación:',note:'• Sube cualquier <b>mapa equirectangular</b> (relación 2:1). Doble clic en el globo para añadir un marcador; mueve con Shift+arrastrar.',w:'O',min:'Minimizar',max:'Expandir'}, en:{title:'3D Map Globalizer',change:'Cambiar a Español',file:'Map image to globalize',imp:'Markers JSON (optional)',clr:'Clear markers',exp:'Export markers',rot:'Auto rotation',reset:'Reset view',glob:'Global lighting (no day/night)',light:'Lighting:',note:'• Upload any <b>equirectangular map</b> (2:1 ratio). Double‑click on the globe to add a marker; move with Shift+drag.',w:'W',min:'Minimize',max:'Expand'} };
+    let lang=localStorage.getItem('lang')||'es';
+    function setLang(l){lang=l;localStorage.setItem('lang',l);const t=i18n[l];
+      document.getElementById('titleText').childNodes[0].textContent=t.title+' ';
+      document.getElementById('langToggle').textContent=t.change;
+      document.getElementById('labelFileImg').textContent=t.file;
+      document.getElementById('labelImportMarkers').textContent=t.imp;
+      document.getElementById('clearMarkers').textContent=t.clr;
+      document.getElementById('exportMarkers').textContent=t.exp;
+      document.getElementById('labelRotate').textContent=t.rot;
+      document.getElementById('resetView').textContent=t.reset;
+      document.getElementById('labelGlobalLight').textContent=t.glob;
+      document.getElementById('labelLightText').textContent=t.light;
+      document.getElementById('noteText').innerHTML=t.note;
+      document.getElementById('compassW').textContent=t.w;
+      const isMin=document.getElementById('panel').classList.contains('min');
+      const btn=document.getElementById('togglePanel'); btn.textContent=isMin?t.max:t.min; btn.title=btn.textContent;
+    }
+
+    document.getElementById('langToggle').onclick=()=>setLang(lang==='es'?'en':'es');
+
+    // THREE scene
+    const app=document.getElementById('app');
+    const scene=new THREE.Scene();
+    const camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,0.1,100); camera.position.set(0,0,2.4);
+    const renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setPixelRatio(Math.min(devicePixelRatio,2)); renderer.setSize(innerWidth,innerHeight); renderer.setClearColor(0x0b0e12,1); app.appendChild(renderer.domElement);
+
+    const dirLight=new THREE.DirectionalLight(0xffffff,1.1); dirLight.position.set(5,3,5);
+    const ambLight=new THREE.AmbientLight(0xffffff,0.35); scene.add(dirLight,ambLight);
+
+    const R=1; const globe=new THREE.Mesh(new THREE.SphereGeometry(R,128,128), new THREE.MeshPhongMaterial({color:0xffffff})); scene.add(globe);
+
+    const controls=new OrbitControls(camera,renderer.domElement); controls.enableDamping=true; controls.dampingFactor=0.05; controls.autoRotate=true; controls.enablePan=false; controls.minDistance=1.1; controls.maxDistance=3.2;
+
+    const raycaster=new THREE.Raycaster(); const mouse=new THREE.Vector2(); const markerGroup=new THREE.Group(); scene.add(markerGroup);
+
+    function latLonToVector3(lat,lon,radius=R){
+      const phi=THREE.MathUtils.degToRad(90-lat); const theta=THREE.MathUtils.degToRad(lon+180);
+      // x negativo para alinear vista inicial hacia -Z
+      const x=-radius*Math.sin(phi)*Math.cos(theta);
+      const y= radius*Math.cos(phi);
+      const z= radius*Math.sin(phi)*Math.sin(theta);
+      return new THREE.Vector3(x,y,z);
+    }
+    function vector3ToLatLon(v){
+      const r=v.length();
+      const lat=THREE.MathUtils.radToDeg(Math.asin(v.y/r));
+      // usar -x para invertir y coincidir con latLonToVector3
+      const lon=THREE.MathUtils.radToDeg(Math.atan2(v.z, -v.x));
+      return {lat,lon};
+    }
+    function screenToGlobe(e){
+      const rect=renderer.domElement.getBoundingClientRect();
+      mouse.x=((e.clientX-rect.left)/rect.width)*2-1; mouse.y=-((e.clientY-rect.top)/rect.height)*2+1;
+      raycaster.setFromCamera(mouse,camera);
+      return raycaster.intersectObject(globe,false)[0]||null;
+    }
+
+    function makeLabel(text){
+      const c=document.createElement('canvas'); c.width=512; c.height=128; const g=c.getContext('2d');
+      g.fillStyle='rgba(20,22,27,.9)'; g.fillRect(0,0,c.width,c.height); g.strokeStyle='rgba(255,255,255,.2)'; g.strokeRect(0,0,c.width,c.height);
+      g.font='42px system-ui,Segoe UI,Roboto,Inter,sans-serif'; g.fillStyle='#fff'; g.textAlign='center'; g.textBaseline='middle'; g.fillText(text,c.width/2,c.height/2);
+      const tex=new THREE.CanvasTexture(c); tex.colorSpace=THREE.SRGBColorSpace; return new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true}));
+    }
+    function addMarker(lat,lon,name='Ubicación'){
+      const g=new THREE.Group(); g.userData={lat,lon,name};
+      g.position.copy(latLonToVector3(lat,lon,R*1.001));
+      const dot=new THREE.Mesh(new THREE.SphereGeometry(0.008,16,16), new THREE.MeshStandardMaterial({color:0xffd27a}));
+      const label=makeLabel(name); label.scale.set(0.45,0.12,1); label.position.copy(g.position.clone().normalize().multiplyScalar(0.06));
+      g.add(dot,label); markerGroup.add(g); persistMarkers();
+    }
+    function persistMarkers(){ localStorage.setItem('markers', JSON.stringify(markerGroup.children.map(m=>m.userData))); }
+    function restoreMarkers(){ try{ (JSON.parse(localStorage.getItem('markers')||'[]')||[]).forEach(m=>addMarker(m.lat,m.lon,m.name||'Ubicación')); }catch{} }
+    restoreMarkers();
+
+    const coordsEl=document.getElementById('coords'); const tooltip=document.getElementById('tooltip');
+    renderer.domElement.addEventListener('mousemove',e=>{ const hit=screenToGlobe(e); if(hit){ const {lat,lon}=vector3ToLatLon(hit.point); const dist=controls.getDistance?` · Dist: ${controls.getDistance().toFixed(2)}`:''; coordsEl.textContent=`Lat: ${lat.toFixed(2)}°, Lon: ${lon.toFixed(2)}°${dist}`; tooltip.style.left=e.clientX+'px'; tooltip.style.top=e.clientY+'px'; tooltip.style.display='block'; tooltip.textContent=`${lat.toFixed(2)}°, ${lon.toFixed(2)}°`; } else { tooltip.style.display='none'; }});
+    renderer.domElement.addEventListener('dblclick',e=>{ const hit=screenToGlobe(e); if(!hit) return; const {lat,lon}=vector3ToLatLon(hit.point); const name=prompt(lang==='es'?'Nombre del marcador:':'Marker name:','Ubicación'); if(name!==null) addMarker(lat,lon,name||'Ubicación'); });
+
+    let dragging=null; renderer.domElement.addEventListener('pointerdown',e=>{ if(!e.shiftKey) return; const hit=screenToGlobe(e); if(!hit) return; let n=null,min=1e9; for(const m of markerGroup.children){ const d=m.position.distanceTo(hit.point); if(d<min){min=d;n=m;} } if(n&&min<0.08){ dragging=n; controls.enableRotate=false; } });
+    renderer.domElement.addEventListener('pointermove',e=>{ if(!dragging) return; const hit=screenToGlobe(e); if(!hit) return; const {lat,lon}=vector3ToLatLon(hit.point); dragging.userData.lat=lat; dragging.userData.lon=lon; dragging.position.copy(latLonToVector3(lat,lon,R*1.001)); dragging.children[1].position.copy(dragging.position.clone().normalize().multiplyScalar(0.06)); });
+    renderer.domElement.addEventListener('pointerup',()=>{ if(dragging){ controls.enableRotate=true; persistMarkers(); dragging=null; } });
+
+    const panel=document.getElementById('panel'); const togglePanelBtn=document.getElementById('togglePanel');
+    togglePanelBtn.onclick=()=>{ const isMin=panel.classList.toggle('min'); const t=i18n[lang]; togglePanelBtn.textContent=isMin?t.max:t.min; togglePanelBtn.title=togglePanelBtn.textContent; };
+    document.getElementById('toggleRotate').onchange=e=>{ controls.autoRotate=e.target.checked; };
+    document.getElementById('resetView').onclick=()=>{ controls.reset(); camera.position.set(0,0,2.4); camera.lookAt(0,0,0); };
+
+    const toggleGlobalLight=document.getElementById('toggleGlobalLight'); const lightSlider=document.getElementById('lightSlider'); const lightValue=document.getElementById('lightValue');
+    function applyGlobalLight(){ dirLight.intensity=0; ambLight.intensity=parseFloat(lightSlider.value); lightValue.textContent=ambLight.intensity.toFixed(2); }
+    function applyNormalLight(){ dirLight.intensity=1.1; ambLight.intensity=0.35; lightValue.textContent=ambLight.intensity.toFixed(2); }
+    toggleGlobalLight.onchange=()=>{ if(toggleGlobalLight.checked){ lightSlider.disabled=false; applyGlobalLight(); } else { lightSlider.disabled=true; applyNormalLight(); } };
+    lightSlider.oninput=()=>{ if(toggleGlobalLight.checked){ ambLight.intensity=parseFloat(lightSlider.value); lightValue.textContent=ambLight.intensity.toFixed(2); } };
+
+    document.getElementById('clearMarkers').onclick=()=>{ markerGroup.clear(); localStorage.removeItem('markers'); };
+    document.getElementById('exportMarkers').onclick=()=>{ const data=markerGroup.children.map((m,i)=>({name:m.userData.name||`Marker-${i+1}`,lat:m.userData.lat,lon:m.userData.lon})); const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='markers.json'; a.click(); URL.revokeObjectURL(a.href); };
+    document.getElementById('importMarkers').addEventListener('change',e=>{ const f=e.target.files?.[0]; if(!f) return; const fr=new FileReader(); fr.onload=()=>{ try{ const arr=JSON.parse(fr.result); markerGroup.clear(); (arr||[]).forEach(m=>addMarker(m.lat,m.lon,m.name||'Ubicación')); persistMarkers(); }catch{ alert(lang==='es'?'JSON inválido':'Invalid JSON'); } }; fr.readAsText(f); });
+
+    document.getElementById('fileImg').addEventListener('change',e=>{ const file=e.target.files?.[0]; if(!file) return; const url=URL.createObjectURL(file); new THREE.TextureLoader().load(url,tex=>{ tex.colorSpace=THREE.SRGBColorSpace; tex.anisotropy=8; tex.wrapS=tex.wrapT=THREE.ClampToEdgeWrapping; globe.material.map=tex; globe.material.needsUpdate=true; URL.revokeObjectURL(url); }); });
+    document.getElementById('removeTexture').onclick=()=>{ globe.material.map=null; globe.material.needsUpdate=true; globe.material.color.set(0xffffff); document.getElementById('fileImg').value=''; };
+
+    const needleEl=document.getElementById('needle');
+    function updateCompass(){ const az=controls.getAzimuthalAngle?.()||0; const deg=THREE.MathUtils.radToDeg(-az); needleEl.style.transform=`translate(-50%,-100%) rotate(${deg.toFixed(2)}deg)`; }
+    function tick(){ controls.update(); updateCompass(); renderer.render(scene,camera); requestAnimationFrame(tick); }
+    tick();
+
+    addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+
+    setLang(lang);
+  </script>
+</body>
+</html>
