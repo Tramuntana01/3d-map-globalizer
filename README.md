@@ -37,6 +37,7 @@ Este proyecto me sirve para:
 ## 📸 Capturas
 <img width="2549" height="1268" alt="image" src="https://github.com/user-attachments/assets/32059a93-04d3-43ec-9432-2501f17f3a4c" />
 
+<img width="1907" height="933" alt="Globe-mapper-preview" src="https://github.com/user-attachments/assets/8faddd1a-8f6a-48cc-aaaf-0c8250365a6d" />
 
 ---
 
